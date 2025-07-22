@@ -1,0 +1,55 @@
+module BaudRateGenerator(
+    input         PCLK,
+    input         PRESETn,
+    input [1:0]   spi_mode,
+    input         spiswai,
+    input [2:0]   sppr, spr,
+    input         cpol, cpha, ss,
+    output        sclk,
+    output        flag_low, flag_high, flags_low, flags_high,
+    output [11:0] BaudRateDivisor
+);
+
+    reg [11:0] countreg;
+    reg sclkreg, fhreg, flreg, fshreg, fslreg;
+
+    wire [11:0] count;
+    wire pre_sclk = cpol ? 1'b1 : 1'b0;
+    wire w1 = cpol ^ cpha;
+
+    assign BaudRateDivisor = (sppr + 1) * (1 << (spr + 1));
+    assign count      = PRESETn ? countreg : 12'b0;
+    assign sclk       = PRESETn ? sclkreg  : pre_sclk;
+    assign flag_high  = PRESETn ? fhreg    : 1'b0;
+    assign flag_low   = PRESETn ? flreg    : 1'b0;
+    assign flags_high = PRESETn ? fshreg   : 1'b0;
+    assign flags_low  = PRESETn ? fslreg   : 1'b0;
+
+    always @(posedge PCLK) begin
+        if ((spi_mode == 2'b00 || spi_mode == 2'b01) && ~ss && ~spiswai) begin
+            if (count == BaudRateDivisor - 1'b1) begin
+                countreg <= 12'b0;
+                sclkreg <= ~sclkreg;
+            end else begin
+                countreg <= countreg + 1;
+            end
+        end else begin
+            countreg <= 12'b0;
+            sclkreg <= pre_sclk;
+        end
+
+        // Flag Logic
+        if (!w1) begin
+            fslreg <= ((count == BaudRateDivisor - 2'b10) && ~sclk) ? 1'b1 : 1'b0;
+            flreg  <= ((count == BaudRateDivisor - 2'b10) && sclk) ? 1'b1 : 1'b0;
+            fshreg <= 1'b0;  // default fallback
+            fhreg  <= 1'b0;
+        end else begin
+            fshreg <= ((count == BaudRateDivisor - 2'b10) && sclk) ? 1'b1 : 1'b0;
+            fhreg  <= ((count == BaudRateDivisor - 2'b10)  && ~sclk) ? 1'b1 : 1'b0;
+            fslreg <= 1'b0;
+            flreg  <= 1'b0;
+        end
+    end
+
+endmodule
