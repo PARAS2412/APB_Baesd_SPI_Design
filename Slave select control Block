@@ -1,0 +1,52 @@
+module slave_select_control( PCLK, PRESETn, mstr, spiswai, spi_mode, send_data, BaudRateDivisor, receive_data, ss, tip);
+ 
+   input PCLK, PRESETn, mstr, spiswai, send_data;
+	input [1:0] spi_mode;
+	input [11:0] BaudRateDivisor;
+	output reg receive_data, ss;
+	output tip;
+	wire [15:0] target;
+	reg [15:0] count;
+	
+	assign target = 16 * BaudRateDivisor;
+	assign tip = ~ss;
+
+	always @(posedge PCLK or negedge PRESETn) begin
+	   if(!PRESETn) begin 
+		   receive_data <= 1'b0;
+			ss <= 1'b1;
+			count <= 16'hffff;
+		end
+		else begin
+		   if(spi_mode == 2'b00 || spi_mode == 2'b01 && ~spiswai && mstr) begin
+			   if(send_data) begin
+				   ss <= 1'b0;
+					receive_data <= 1'b0;
+					count <= 16'b0;
+				end
+				else begin
+				   if(count <= target - 1'b1) begin
+					   ss <= 1'b0;
+						count <= count + 1'b1;
+					   if(count == target -1'b1) begin
+					      receive_data <= 1'b1;
+						end
+						else begin
+						   receive_data <= receive_data;
+						end
+					end
+					else begin
+					   count <= 16'hffff;
+					   ss <= 1'b1;
+					   receive_data <= 1'b0;
+					end
+				end
+			end
+			else begin 
+			   receive_data <= 1'b0;
+				ss <= 1'b1;
+				count <= 16'hffff;
+			end
+		end
+	end
+endmodule
