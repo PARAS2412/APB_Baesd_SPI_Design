@@ -35,6 +35,10 @@ Tools Used
 -Quartus Prime – Optional synthesis for FPGA targets
 -Verilog HDL – RTL Design
 
+Acknowledgements
+Developed as part of an academic and hardware verification exercise.
+Special thanks to peers and mentors for review and testing support.
+
 
 
 
