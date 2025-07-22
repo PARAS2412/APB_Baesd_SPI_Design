@@ -1,0 +1,74 @@
+module shift_register (
+    input        PCLK,
+    input        PRESETn,
+    input        ss,
+    input        send_data,
+    input        lsbfe,    // 0: MSB first, 1: LSB first
+    input        cpha,
+    input        cpol,
+    input        flag_low,
+    input        flag_high,
+    input        flags_low,
+    input        flags_high,
+    input        miso,
+    input  [7:0] data_mosi,
+    input        receive_data,
+    output       mosi,
+    output [7:0] data_miso
+);
+
+    reg [7:0] shift_reg;       // Shift-out data (MOSI)
+    reg [7:0] recv_reg;        // Shift-in data (MISO)
+    reg [2:0] bit_counter_send;
+    reg [2:0] bit_counter_recv;
+    reg       mosi_reg;
+
+    wire shift_edge  = (cpol ^ cpha) ? flags_high : flags_low;
+    wire sample_edge = (cpol ^ cpha) ? flag_high  : flag_low;
+
+    assign mosi = mosi_reg;
+    assign data_miso = receive_data ? recv_reg : 8'h00;
+
+    always @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
+            shift_reg        <= 8'b0;
+            recv_reg         <= 8'b0;
+            bit_counter_send <= 3'd0;
+            bit_counter_recv <= 3'd0;
+            mosi_reg         <= 1'b0;
+        end
+        else if (!ss) begin  // Only work when slave is selected
+
+            if (send_data) begin
+                shift_reg <= data_mosi;
+                bit_counter_send <= (lsbfe) ? 3'd0 : 3'd7;
+                bit_counter_recv <= (lsbfe) ? 3'd7 : 3'd0;
+            end
+
+            // Transmit logic on shift edge
+            if (shift_edge) begin
+                mosi_reg <= shift_reg[bit_counter_send];
+
+                if (lsbfe)
+                    bit_counter_send <= bit_counter_send + 1'b1;
+                else
+                    bit_counter_send <= bit_counter_send - 1'b1;
+            end
+
+            // Receive logic on sample edge
+            if (sample_edge) begin
+                recv_reg[bit_counter_recv] <= miso;
+
+                if (lsbfe)
+                    bit_counter_recv <= bit_counter_recv - 1'b1;
+                else
+                    bit_counter_recv <= bit_counter_recv + 1'b1;
+            end
+        end
+        else begin
+            mosi_reg <= 1'b0;
+            bit_counter_send <= (lsbfe) ? 3'd0 : 3'd7;
+            bit_counter_recv <= (lsbfe) ? 3'd7 : 3'd0;
+        end
+    end
+endmodule
