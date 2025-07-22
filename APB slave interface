@@ -1,0 +1,174 @@
+module apb_slave_interface(
+    input         PCLK,
+    input         PRESETn,
+    input [2:0]   PADDR,
+    input         PWRITE,
+    input         PSEL,
+    input         PENABLE,
+    input [7:0]   PWDATA,
+    input         ss,
+    input [7:0]   miso_data,
+    input         receive_data,
+    input         tip,
+
+    output        mstr,
+    output        cpol,
+    output        cpha,
+    output        lsbfe,
+    output        spiswai,
+    output        spi_interrupt_request,
+    output reg    PREADY,
+    output reg    PSLVERR,
+    output        send_data,
+    output [7:0]      mosi_data,
+    output [1:0]  spi_mode,
+    output [2:0]  sppr,
+    output [2:0]  spr,
+    output [7:0]  PRDATA
+);
+
+    // SPI internal registers
+    reg [7:0] SPI_CR_1;
+    reg [7:0] SPI_CR_2;
+    reg [7:0] SPI_BR;
+    reg [7:0] SPI_SR;
+    reg [7:0] SPI_DR;
+
+    reg [1:0] state;
+    reg [1:0] mode;
+
+    reg wr_enb, rd_enb;
+
+    reg sptef, spif;
+
+    wire modf, sptie, spie, spe, ssoe, modfen;
+
+    parameter IDLE   = 2'b00;
+    parameter SETUP  = 2'b01;
+    parameter ENABLE = 2'b10;
+
+    parameter spi_run  = 2'b00;
+    parameter spi_wait = 2'b01;
+    parameter spi_stop = 2'b10;
+
+    wire [7:0] cr2_mask = 8'b00011011;
+    wire [7:0] br_mask  = 8'b01110111;
+
+    assign mstr   = SPI_CR_1[4];
+    assign cpol   = SPI_CR_1[3];
+    assign cpha   = SPI_CR_1[2];
+    assign lsbfe  = SPI_CR_1[0];
+    assign spie   = SPI_CR_1[7];
+    assign spe    = SPI_CR_1[6];
+    assign sptie  = SPI_CR_1[5];
+    assign ssoe   = SPI_CR_1[1];
+
+    assign modfen = SPI_CR_2[4];
+    assign spiswai = SPI_CR_2[1];
+
+    assign sppr = SPI_BR[6:4];
+    assign spr  = SPI_BR[2:0];
+
+    assign modf = ~ss & mstr & modfen & ~ssoe;
+
+    assign spi_mode = mode;
+    assign send_data = (state == ENABLE) && PWRITE && (PADDR == 3'b101);
+    assign mosi_data = SPI_DR;  // LSB as example for transmission
+
+    assign PRDATA = rd_enb ?
+                    (PADDR == 3'b000 ? SPI_CR_1 :
+                     PADDR == 3'b001 ? SPI_CR_2 :
+                     PADDR == 3'b010 ? SPI_BR :
+                     PADDR == 3'b011 ? SPI_SR : SPI_DR) :
+                    8'b0;
+
+    assign spi_interrupt_request = ((~spie & ~sptie) ? 1'b0 :
+                                    (~sptie & spie)   ? (spif | modf) :
+                                    (~spie & sptie)   ? sptef :
+                                                         (spif & modf & sptef));
+
+    always @(posedge PCLK or negedge PRESETn) begin
+        if (!PRESETn) begin
+            state     <= IDLE;
+            mode      <= spi_run;
+
+            SPI_SR    <= {spif, 1'b0, sptef, modf, 4'b0};
+            SPI_CR_1  <= 8'h04;
+            SPI_CR_2  <= 8'h00;
+            SPI_BR    <= 8'h00;
+            SPI_DR    <= 8'b0;
+
+            PREADY    <= 1'b0;
+            PSLVERR   <= 1'b0;
+            wr_enb    <= 1'b0;
+            rd_enb    <= 1'b0;
+            sptef     <= 1'b1;
+            spif      <= 1'b0;
+        end else begin
+		  
+		      SPI_SR    <= 8'h00;
+            // State transitions
+            if (PSEL && !PENABLE)
+                state <= SETUP;
+            else if (PSEL && PENABLE)
+                state <= ENABLE;
+            else
+                state <= IDLE;
+					 
+				//MOde transitions
+				if(!spe && mode == spi_run) begin
+				   mode <= spi_wait;
+				end
+				else if(spe) begin
+				   mode <= spi_run;
+				end
+				else if(mode == spi_wait && spiswai) begin
+				   mode <= spi_stop;
+				end
+				else if(mode == spi_wait && ~spiswai) begin
+				   mode <= spi_wait;
+				end
+				else begin
+				   mode <= spi_run;
+				end
+				
+            // Control write and read enables
+            wr_enb <= (state == ENABLE) && PWRITE;
+            rd_enb <= (state == ENABLE) && ~PWRITE;
+
+            // Register writes
+            if (wr_enb) begin
+                case (PADDR)
+                    3'b000: SPI_CR_1 <= PWDATA;
+                    3'b001: SPI_CR_2 <= PWDATA & cr2_mask;
+                    3'b010: SPI_BR   <= PWDATA & br_mask;
+                    3'b101: SPI_DR   <= PWDATA;
+                    default: ; // Do nothing
+                endcase
+            end
+
+            // DR read logic
+            if (!wr_enb) begin
+                if ((SPI_DR == PWDATA) && (SPI_DR != miso_data) && 
+                   (mode == spi_run || mode == spi_wait))
+                    SPI_DR <= 8'b0;
+                else if (receive_data && (mode == spi_run || mode == spi_wait))
+                    SPI_DR <= miso_data;
+            end
+
+            // SR flags
+            sptef <= (SPI_DR == 8'b0);
+            spif  <= (SPI_DR != 8'b0);
+
+            // Response
+            if (state == ENABLE) begin
+                PREADY  <= 1'b1;
+                PSLVERR <= tip;
+            end else begin
+                PREADY  <= 1'b0;
+                PSLVERR <= 1'b0;
+            end
+        end
+    end
+
+endmodule
